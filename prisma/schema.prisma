@@ -1,0 +1,111 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum DeliverableStatus {
+  IN_REVIEW
+  APPROVED
+  CHANGES_REQUESTED
+  ARCHIVED
+}
+
+enum CommentCategory {
+  MIX
+  FOLEY
+  BGM
+  DIALOGUE
+}
+
+enum AuthorRole {
+  DIRECTOR
+  MIX_ENGINEER
+  SHOWRUNNER
+  SOUND_SUPERVISOR
+  RE_RECORDING_MIXER
+  CLIENT
+}
+
+model Workspace {
+  id          String             @id @default(uuid())
+  name        String
+  slug        String             @unique
+  plan        String             @default("STUDIO_PRO")
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  assets      DeliverableAsset[]
+
+  @@map("workspaces")
+}
+
+model DeliverableAsset {
+  id            String             @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  title         String
+  episodeCode   String?            // e.g. "EP104"
+  formatSpec    String             @default("48kHz / 24-Bit Linear PCM 5.1")
+  durationMs    Int
+  status        DeliverableStatus  @default(IN_REVIEW)
+  approvedAt    DateTime?
+  approvedBy    String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  versions      AssetVersion[]
+  comments      TimecodeComment[]
+
+  @@index([workspaceId, status])
+  @@index([createdAt(sort: Desc)])
+  @@map("deliverable_assets")
+}
+
+model AssetVersion {
+  id              String            @id @default(uuid())
+  assetId         String
+  asset           DeliverableAsset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  versionNumber   Int               // 1 for v1, 2 for v2
+  label           String            // e.g. "v1 Rough Cut", "v2 Loudness Matched"
+  storageKey      String            // Wasabi / S3 bucket object key
+  sampleRate      String            @default("48000") // 48kHz, 96kHz
+  bitDepth        Int               @default(24)      // 16, 24, 32
+  channels        String            @default("5.1 Surround") // Stereo, 5.1, 7.1.4 Atmos
+  lufsIntegrated  Float             // e.g. -14.1, -18.4 (EBU R128)
+  peakDb          Float             // e.g. -1.0 dBFS true peak
+  waveformPeaks   Json              // Array of 140 normalized peak floats [0.0 - 1.0]
+  fileSizeBytes   BigInt?
+  mimeType        String            @default("audio/wav")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([assetId, versionNumber])
+  @@index([assetId, createdAt])
+  @@map("asset_versions")
+}
+
+model TimecodeComment {
+  id              String            @id @default(uuid())
+  assetId         String
+  asset           DeliverableAsset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  versionNumber   Int               @default(1)
+  timestampMs     Int               // Exact millisecond marker position
+  category        CommentCategory   @default(MIX)
+  authorName      String
+  authorEmail     String?
+  authorRole      AuthorRole        @default(DIRECTOR)
+  text            String            @db.Text
+  isResolved      Boolean           @default(false)
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([assetId, timestampMs])
+  @@index([assetId, isResolved])
+  @@index([assetId, category])
+  @@map("timecode_comments")
+}
